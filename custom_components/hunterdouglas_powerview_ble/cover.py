@@ -35,7 +35,7 @@ async def async_setup_entry(
     coordinator: PVCoordinator = config_entry.runtime_data
     async_add_entities(
         [PowerViewCoverTilt(coordinator)]
-        if coordinator.dev_details.get("model") in ["51", "62"]
+        if coordinator.dev_details.get("model") in ["8", "51", "62"]
         else [PowerViewCover(coordinator)]
     )
 
@@ -127,9 +127,9 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
                 self.is_closing or self.is_opening
             ):
                 return
-            self._target_position = round(target_position)
+            self._target_position = round(target_position)            
             try:
-                await self._coord.api.set_position(round(target_position))
+                await self._coord.api.set_position(round(target_position), tilt = self.current_cover_tilt_position )
                 self.async_write_ha_state()
             except BleakError as err:
                 LOGGER.error(
@@ -201,6 +201,15 @@ class PowerViewCoverTilt(PowerViewCover):
         super().__init__(coordinator)
 
     @property
+    def current_cover_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return current position of cover.
+
+        None is unknown, 0 is closed, 100 is fully open.
+        """
+        pos: Final = self._coord.data.get(ATTR_CURRENT_POSITION)
+        return round(100-pos) if pos is not None else None
+
+    @property
     def current_cover_tilt_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
         """Return current tilt of cover.
 
@@ -209,6 +218,28 @@ class PowerViewCoverTilt(PowerViewCover):
         pos: Final = self._coord.data.get(ATTR_CURRENT_TILT_POSITION)
         return round(pos) if pos is not None else None
 
+    async def async_set_cover_position(self, **kwargs: Any) -> None:
+        """Move the cover to a specific position."""
+        target_position: Final = 100-kwargs.get(ATTR_POSITION)
+        if target_position is not None:
+            LOGGER.debug("set cover to position %f", target_position)
+            if self.current_cover_position == round(target_position) and not (
+                self.is_closing or self.is_opening
+            ):
+                return
+            self._target_position = round(target_position)            
+            try:
+                await self._coord.api.set_position(round(target_position), tilt = self.current_cover_tilt_position )
+                self.async_write_ha_state()
+            except BleakError as err:
+                LOGGER.error(
+                    "Failed to move cover '%s' to %f%%: %s",
+                    self.name,
+                    target_position,
+                    err,
+                )
+    
+    
     async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
         """Move the tilt to a specific position."""
 
@@ -222,7 +253,7 @@ class PowerViewCoverTilt(PowerViewCover):
 
             try:
                 await self._coord.api.set_position(
-                    self.current_cover_position, tilt=target_position
+                    100-self.current_cover_position, tilt=target_position
                 )
                 self.async_write_ha_state()
             except BleakError as err:

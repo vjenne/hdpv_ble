@@ -182,21 +182,34 @@ class PowerViewBLE:
     @staticmethod
     def dec_manufacturer_data(data: bytearray) -> list[tuple[str, float]]:
         """Decode manufacturer data from BLE advertisement V2."""
+
+       # LOGGER.debug(f"Ruwe BLE data: {data.hex()}")  # hex() toont de ruwe bytes in hexadecimale vorm
+
         if len(data) != 9:
             LOGGER.debug("not a V2 record!")
             return []
-        pos: Final[int] = int.from_bytes(data[3:5], byteorder="little")
+        
+        # Get the last 4 bits of data[4] and shift them 6 places to the left
+        last_4_bits = (data[4] & 0b1111) << 6 
+        # Get the first 6 bits of data[3]
+        first_6_bits = (data[3] >> 2) & 0b111111 
+        # Combine them into a single integer
+        pos = last_4_bits | first_6_bits
+
+        #LOGGER.debug(f"(bin: {data[3]:08b} - {data[4]:08b} - {data[5]:08b})")
+      
+
         pos2: Final[int] = (int(data[5]) << 4) + (int(data[4]) >> 4)
         return [
-            (ATTR_CURRENT_POSITION, ((pos >> 2) / 10)),
+            (ATTR_CURRENT_POSITION, (pos / 10)),
             ("position2", pos2 >> 2),
             ("position3", int(data[6])),
-            (ATTR_CURRENT_TILT_POSITION, int(data[7])),
+            (ATTR_CURRENT_TILT_POSITION, ((pos2 >> 2)/10)), # int(data[7])),
             ("home_id", int.from_bytes(data[0:2], byteorder="little")),
             ("type_id", int.from_bytes(data[2:3])),
-            ("is_opening", bool(pos & 0x3 == 0x2)),
-            ("is_closing", bool(pos & 0x3 == 0x1)),
-            ("battery_charging", bool(pos & 0x3 == 0x3)),  # observed
+            ("is_opening", bool(data[3] & 0x3 == 0x2)),
+            ("is_closing", bool(data[3] & 0x3 == 0x1)),
+            ("battery_charging", bool(data[3] & 0x3 == 0x3)),  # observed
             ("battery_level", POWER_LEVELS[(data[8] >> 6)]),  # cannot hit 4
             ("resetMode", bool(data[8] & 0x1)),
             ("resetClock", bool(data[8] & 0x2)),
@@ -213,11 +226,13 @@ class PowerViewBLE:
         disconnect: bool = True,
     ) -> None:
         """Set position of device."""
+       
         LOGGER.debug("%s setting position to %i, tilt %i", self.name, pos1, tilt)
+        LOGGER.debug("jaaaa")
         await self._cmd(
             (
                 ShadeCmd.SET_POSITION,
-                int.to_bytes(pos1, 2, byteorder="little")
+                int.to_bytes(pos1*100, 2, byteorder="little")
                 + int.to_bytes(
                     pos2 if pos2 is not None else 0x8000, 2, byteorder="little"
                 )
@@ -234,8 +249,9 @@ class PowerViewBLE:
 
     async def open(self) -> None:
         """Fully open cover."""
-        LOGGER.debug("%s open", self.name)
+        LOGGER.debug("%s open (middels scene)", self.name)
         await self.set_position(OPEN_POSITION, disconnect=False)
+       # await self.activate_scene(2)
 
     async def stop(self) -> None:
         """Stop device movement."""
@@ -244,8 +260,9 @@ class PowerViewBLE:
 
     async def close(self) -> None:
         """Fully close cover."""
-        LOGGER.debug("%s close", self.name)
+        LOGGER.debug("%s close (middels scene)", self.name)
         await self.set_position(CLOSED_POSITION, disconnect=False)
+      #  await self.activate_scene(3)
 
     # uint8_t scene#, uint8_t unknown
     # open: scene 2
